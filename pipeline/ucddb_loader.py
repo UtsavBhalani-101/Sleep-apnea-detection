@@ -468,8 +468,13 @@ class ApneaCNN(nn.Module):
     """
     1D Convolutional Neural Network for binary apnea classification.
 
-    Input  : (batch, 3, 300)  — 3 channels × 300 timesteps
-    Output : (batch, 1)       — P(apnea) via sigmoid
+    Input  : (batch, C, 300*N)  — C channels × (300 × CONTEXT_WINDOWS) timesteps
+             With CONTEXT_WINDOWS=1  → (batch, C, 300)   — 30-second window
+             With CONTEXT_WINDOWS=5  → (batch, C, 1500)  — 2.5-minute window
+    Output : (batch, 1)             — P(apnea) via sigmoid
+
+    AdaptiveAvgPool1d(1) collapses ANY time length to a fixed 256-dim vector,
+    so this architecture requires NO changes for different CONTEXT_WINDOWS values.
 
     Architecture rationale:
     - Conv1D sees 300 timesteps as the sequence; 3 channels as input depth
@@ -567,16 +572,27 @@ def build_dataset(patient_ids: list[str]) -> tuple[np.ndarray, np.ndarray]:
             n_apnea = int(labs.sum())
             apnea_percentage = 100 * (n_apnea / len(labs))
 
-            # 2. Check condition (5.0 = 5%)
-            if apnea_percentage < 5.0:  
+            # Check condition (5.0 = 5%)
+            if apnea_percentage < 5.0:
                 print(f"SKIPPED — near normal patient ({apnea_percentage:.1f}%)")
                 continue
 
-            # 3. Append ONLY if all checks pass
-            all_windows.append(wins)
-            all_labels.append(labs)
+            # ── Temporal stacking — MUST happen per-patient ────────────────────
+            # stack_windows() groups consecutive windows WITHIN a single patient.
+            # If we concatenated all patients first and stacked afterwards, groups
+            # would silently bridge the boundary between two different patients,
+            # leaking signal from patient A's last windows into patient B's first
+            # windows. Stacking here prevents that contamination entirely.
+            wins_stacked, labs_stacked = stack_windows(wins, labs, n=CONTEXT_WINDOWS)
 
-            print(f"{len(labs)} windows, {n_apnea} apnea ({apnea_percentage:.1f}%)")
+            all_windows.append(wins_stacked)
+            all_labels.append(labs_stacked)
+
+            n_apnea_stacked = int(labs_stacked.sum())
+            print(
+                f"{len(labs)} raw → {len(labs_stacked)} stacked windows  "
+                f"| {n_apnea_stacked} apnea ({100*n_apnea_stacked/len(labs_stacked):.1f}%)"
+            )
 
         except Exception as e:
             print(f"FAILED — {e}")
@@ -736,7 +752,7 @@ if __name__ == "__main__":
     # Raw ratio can exceed 15x when pooling many near-normal patients together
     # (e.g. ucddb018 at 0.9% apnea). At that level the model overcorrects and
     # floods the output with false positives. Cap at MAX_POS_WEIGHT.
-    MAX_POS_WEIGHT = 5.0
+    MAX_POS_WEIGHT = 10.0
     n_normal_train = int((y_train == 0).sum())
     n_apnea_train = int(y_train.sum())
     raw_weight = n_normal_train / (n_apnea_train + 1e-8)

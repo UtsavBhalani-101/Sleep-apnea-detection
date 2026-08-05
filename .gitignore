@@ -7,3 +7,5 @@ __pycache__
 /.vscode
 /.venv
 download_direct.ps1
+experiments/exp_blueprint.md
+experiments/normal_vs_apnea_comparison (1).png
