@@ -11,6 +11,7 @@ Functions:
 
 from __future__ import annotations
 
+import datetime
 import os
 
 import mne
@@ -24,7 +25,7 @@ from . import windows as windows_mod
 mne.set_log_level("ERROR")
 
 
-def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str]]:
+def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str], datetime.datetime | None]:
     """
     Load the EDF for a given patient and select the configured channels.
 
@@ -33,6 +34,7 @@ def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str]]:
     data         : np.ndarray, shape (n_channels, total_samples)
     native_sfreq : float — sampling frequency stored in the EDF header
     ch_names     : list[str] — channel names actually present after pick
+    meas_date    : datetime | None — recording start time from the EDF header
     """
     edf_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.EDF_SUFFIX}")
 
@@ -42,8 +44,9 @@ def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str]]:
     native_sfreq = filtered_raw.info["sfreq"]
     ch_names = filtered_raw.info["ch_names"]
     data = filtered_raw.get_data()
+    meas_date = filtered_raw.info["meas_date"]
 
-    return data, native_sfreq, ch_names
+    return data, native_sfreq, ch_names, meas_date
 
 
 def resample_to_10hz(data: np.ndarray, native_sfreq: float) -> np.ndarray:
@@ -58,7 +61,10 @@ def resample_to_10hz(data: np.ndarray, native_sfreq: float) -> np.ndarray:
     return resample_poly(data, up, down, axis=1)
 
 
-def parse_respevt(patient_id: str) -> list[tuple[float, float]]:
+def parse_respevt(
+    patient_id: str,
+    meas_date: datetime.datetime | None = None,
+) -> list[tuple[float, float]]:
     """
     Parse the respevt.txt file for a patient into (onset_sec, duration_sec).
 
@@ -67,10 +73,18 @@ def parse_respevt(patient_id: str) -> list[tuple[float, float]]:
       col 1: event type (APNEA, HYP, etc.)
       col 2+: PB/CS flag, duration, SpO2, etc. — Duration is the first
               whole-number column from col 2 onward.
+
+    Parameters
+    ----------
+    meas_date : datetime | None
+        Recording start time from the EDF header. If None, falls back to
+        re-opening the EDF (slower; only needed when calling parse_respevt
+        without first calling load_edf).
     """
-    edf_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.EDF_SUFFIX}")
-    raw_info = mne.io.read_raw_edf(edf_path, preload=False, verbose=False).info
-    meas_date = raw_info["meas_date"]
+    if meas_date is None:
+        edf_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.EDF_SUFFIX}")
+        meas_date = mne.io.read_raw_edf(edf_path, preload=False, verbose=False).info["meas_date"]
+
     edf_start_sec = meas_date.hour * 3600 + meas_date.minute * 60 + meas_date.second
 
     evt_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.RESP_EVT_SUFFIX}")
@@ -131,9 +145,9 @@ def process_patient(patient_id: str) -> tuple[np.ndarray, np.ndarray]:
     windows : (n_windows, C, SAMPLES_PER_WIN), float32, z-score normalized
     labels  : (n_windows,), int64, binary
     """
-    data, native_sfreq, _ = load_edf(patient_id)
+    data, native_sfreq, _, meas_date = load_edf(patient_id)
     data_10hz = resample_to_10hz(data, native_sfreq)
-    events = parse_respevt(patient_id)
+    events = parse_respevt(patient_id, meas_date=meas_date)
     windows, labels = windows_mod.make_windows_and_labels(data_10hz, events)
     windows_norm = windows_mod.normalize(windows, labels)
     return windows_norm, labels
@@ -151,7 +165,7 @@ def run_gate_check(patient_id: str = "ucddb002") -> None:
     print(f"{'=' * 60}")
 
     # Step 1: Load
-    data, native_sfreq, ch_names = load_edf(patient_id)
+    data, native_sfreq, ch_names, meas_date = load_edf(patient_id)
     print(f"  Channels      : {ch_names}")
     print(f"  Native sfreq  : {native_sfreq} Hz")
     print(f"  Raw shape     : {data.shape}")
@@ -161,7 +175,7 @@ def run_gate_check(patient_id: str = "ucddb002") -> None:
     print(f"  After resample: {data_10hz.shape}  (10 Hz)")
 
     # Step 3: Parse events
-    events = parse_respevt(patient_id)
+    events = parse_respevt(patient_id, meas_date=meas_date)
     print(f"  Events parsed : {len(events)}")
     if events:
         print(

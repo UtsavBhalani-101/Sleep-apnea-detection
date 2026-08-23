@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from . import config, dataset, eval, loader, models, train as train_mod
+from . import config, dataset, loader, metrics, models, train as train_mod
 
 
 def _build_sampler(train_ds: dataset.ApneaSequenceDataset) -> WeightedRandomSampler:
@@ -88,7 +88,7 @@ def run(sanity: bool = False) -> None:
 
     # ── Step 8: Train ───────────────────────────────────────────────────────
     print(f"\n[STEP 8] Training for {config.NUM_EPOCHS} epochs ...")
-    train_losses, val_losses = train_mod.fit(
+    train_mod.fit(
         model,
         train_loader,
         test_loader,
@@ -98,17 +98,10 @@ def run(sanity: bool = False) -> None:
         num_epochs=config.NUM_EPOCHS,
     )
 
-    print("\n[STEP 8] Train losses:")
-    for epoch, loss in enumerate(train_losses, start=1):
-        print(f"  Epoch {epoch:02d} | train loss: {loss:.4f}")
-    print("\n[STEP 8] Validation losses:")
-    for epoch, loss in enumerate(val_losses, start=1):
-        print(f"  Epoch {epoch:02d} | val loss: {loss:.4f}")
-
     # ── Step 9: Evaluate ────────────────────────────────────────────────────
     print("\n[STEP 9] Evaluating on test patients ...")
-    eval.evaluate(model, test_loader, device)
-    eval.evaluate_threshold_sweep(model, test_loader, device)
+    metrics.evaluate(model, test_loader, device)
+    metrics.evaluate_threshold_sweep(model, test_loader, device)
 
 
 if __name__ == "__main__":

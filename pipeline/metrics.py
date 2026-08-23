@@ -63,12 +63,13 @@ def evaluate(
 ) -> tuple[float, float, float, float, np.ndarray]:
     """
     Sweep thresholds from 0.10 to 0.85 and report the best macro-F1 result.
+    Uses only the final timestep of each sequence (matches evaluate_threshold_sweep).
 
     Returns
     -------
     best_threshold, best_macro_f1, accuracy, apnea_recall, confusion_matrix
     """
-    probs, labels = _collect_probs_and_labels(model, loader, device, last_step_only=False)
+    probs, labels = _collect_probs_and_labels(model, loader, device, last_step_only=True)
 
     best_thresh, best_f1 = 0.5, 0.0
     for thresh in np.arange(0.10, 0.90, 0.05):

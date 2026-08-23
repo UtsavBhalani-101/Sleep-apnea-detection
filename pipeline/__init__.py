@@ -8,11 +8,11 @@ Modules:
     dataset     : PyTorch Sequence Dataset + per-patient dataset builder
     models      : ApneaCNNLSTM model definition
     train       : train / validate loops
-    eval        : evaluate, evaluate_threshold_sweep
+    metrics     : evaluate, evaluate_threshold_sweep
     orchestrator: end-to-end entry point
 """
 
-from . import config, loader, windows, dataset, models, train, eval, orchestrator, sanity
+from . import config, loader, windows, dataset, models, train, metrics, orchestrator, sanity
 
 __all__ = [
     "config",
@@ -21,7 +21,7 @@ __all__ = [
     "dataset",
     "models",
     "train",
-    "eval",
+    "metrics",
     "orchestrator",
     "sanity",
 ]

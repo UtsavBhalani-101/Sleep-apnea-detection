@@ -34,7 +34,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from . import config, dataset, eval, loader, models, train as train_mod
+from . import config, dataset, loader, metrics, models, train as train_mod
 from .dataset import ApneaSequenceDataset
 
 
@@ -117,10 +117,10 @@ def run_sanity(
 
     # ── Evaluate ────────────────────────────────────────────────────────────
     print(f"\n[5/5] Evaluating (same patient) ...")
-    best_thresh, best_f1, acc, apnea_recall, cm = eval.evaluate(
+    best_thresh, best_f1, acc, apnea_recall, cm = metrics.evaluate(
         model, test_loader, device
     )
-    eval.evaluate_threshold_sweep(model, test_loader, device)
+    metrics.evaluate_threshold_sweep(model, test_loader, device)
 
     # ── Verdict ─────────────────────────────────────────────────────────────
     final_train_loss = train_losses[-1]
