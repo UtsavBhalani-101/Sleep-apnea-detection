@@ -31,7 +31,10 @@ class ApneaCNNLSTM(nn.Module):
     ):
         super().__init__()
 
-        # CNN encoder: one window (C, 300) → embedding (cnn_out_dim,)
+        conv_out_channels = 128
+        pooled_size = 8
+
+        # CNN encoder: one window (C, 300) → embedding (conv_out_channels, pooled_size)
         self.cnn = nn.Sequential(
             nn.Conv1d(in_channels, 32, kernel_size=7, padding=3),
             nn.BatchNorm1d(32),
@@ -43,16 +46,16 @@ class ApneaCNNLSTM(nn.Module):
             nn.ReLU(),
             nn.MaxPool1d(2),  # → (64, 75)
 
-            nn.Conv1d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm1d(cnn_out_dim),
+            nn.Conv1d(64, conv_out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm1d(conv_out_channels),
             nn.ReLU(),
-            nn.AdaptiveAvgPool1d(8),  # → (cnn_out_dim, 1)
+            nn.AdaptiveAvgPool1d(pooled_size),  # → (conv_out_channels, pooled_size)
         )
 
-        # Flatten (128 * 8) features and project to embedding dim
+        # Flatten (conv_out_channels * pooled_size) features and project to embedding dim
         self.fc_proj = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(128 * 8, cnn_out_dim),
+            nn.Linear(conv_out_channels * pooled_size, cnn_out_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
