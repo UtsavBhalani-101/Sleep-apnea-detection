@@ -8,9 +8,10 @@ import numpy as np
 
 from . import config
 
-# SpO2 fixed min-max scaling parameters (channel index 0).
+# SpO2 fixed min-max scaling parameters (channel identified by name).
 SPO2_MIN = 70.0
 SPO2_RANGE = 30.0
+SPO2_CHANNEL_NAME = "SpO2"
 
 
 def make_windows_and_labels(
@@ -58,23 +59,44 @@ def make_windows_and_labels(
     return windows, labels
 
 
-def normalize(windows: np.ndarray, labels: np.ndarray) -> np.ndarray:
+def normalize(
+    windows: np.ndarray,
+    labels: np.ndarray,
+    channel_names: list[str] | None = None,
+) -> np.ndarray:
     """
     Per-subject normalization. Statistics come ONLY from label=0 windows so apnea
     signal does not contaminate the baseline.
 
-      Channel 0 (SpO2): linear scale into roughly [0, 1] (no clipping).
-      Other channels  : z-score using normal-window stats, then clip to
-                        ±CLIP_SIGMA to suppress artifact spikes.
+      SpO2 channel (looked up by name): linear scale into roughly [0, 1],
+                                        then clip to [0, 1] to suppress
+                                        sensor-detach artifacts.
+      Other channels: z-score using normal-window stats, then clip to
+                      ±CLIP_SIGMA to suppress artifact spikes.
+
+    Parameters
+    ----------
+    windows       : (n_windows, n_channels, SAMPLES_PER_WIN)
+    labels        : (n_windows,)
+    channel_names : list of channel names in the same order as windows' axis=1.
+                    Defaults to config.EDF_CHANNELS. Required if you want
+                    SpO2 to be identified by name rather than index 0.
     """
+    if channel_names is None:
+        channel_names = config.EDF_CHANNELS
+
     normal_mask = labels == 0
     normal_wins = windows[normal_mask]
 
     normalized = windows.astype(np.float32).copy()
 
     for ch in range(windows.shape[1]):
-        if ch == 0:
-            normalized[:, ch, :] = (windows[:, ch, :] - SPO2_MIN) / SPO2_RANGE
+        if channel_names[ch] == SPO2_CHANNEL_NAME:
+            normalized[:, ch, :] = np.clip(
+                (windows[:, ch, :] - SPO2_MIN) / SPO2_RANGE,
+                0.0,
+                1.0,
+            )
         else:
             ch_samples = normal_wins[:, ch, :].flatten()
             ch_mean = ch_samples.mean()
