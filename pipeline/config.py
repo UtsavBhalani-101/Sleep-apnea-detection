@@ -6,61 +6,28 @@ Single source of truth — edit here to retarget the pipeline.
 import os
 from pathlib import Path
 
+# The expected dataset subfolder relative to your repo or Kaggle
+DATA_REL_PATH = Path("datasets/st-vincents-university-hospital-university-college-dublin-sleep-apnea-database-1.0.0/files")
 
-def _resolve_data_dir() -> str:
-    """
-    Resolve dataset directory dynamically:
-    1. Check environment variable 'DATA_DIR' or 'SLEEP_DATA_DIR'.
-    2. Check Kaggle input directories (/kaggle/input/...).
-    3. Check Google Colab input directories (/content/...).
-    4. Check relative workspace datasets folder.
-    5. Fallback to default local path.
-    """
-    # 1. Explicit Environment Variable
-    env_dir = os.environ.get("DATA_DIR") or os.environ.get("SLEEP_DATA_DIR")
-    if env_dir:
-        return str(Path(env_dir).resolve())
+# Locations to search, in priority order:
+CANDIDATE_PATHS = [
+    os.environ.get("DATA_DIR"),                                     # 1. Env variable (if set)
+    Path("/kaggle/input/st-vincents-sleep-apnea/files"),            # 2. Kaggle dataset
+    Path(__file__).resolve().parents[1] / DATA_REL_PATH,            # 3. Local repo folder
+    Path(r"d:\Sleep irregularity") / DATA_REL_PATH,                 # 4. Windows absolute fallback
+]
 
-    # 2. Kaggle environment: look for files directory under /kaggle/input
-    kaggle_input = Path("/kaggle/input")
-    if kaggle_input.exists():
-        # Common Kaggle dataset mount names
-        candidates = list(kaggle_input.glob("**/files")) + list(kaggle_input.glob("*ucd*"))
-        for candidate in candidates:
-            if candidate.is_dir() and any(candidate.glob("*.edf")):
-                return str(candidate)
-        # Fallback to direct path under kaggle
-        direct_kaggle = kaggle_input / "st-vincents-university-hospital-sleep-apnea" / "files"
-        if direct_kaggle.exists():
-            return str(direct_kaggle)
-
-    # 3. Colab environment
-    colab_dir = Path("/content/datasets/files")
-    if colab_dir.exists():
-        return str(colab_dir)
-
-    # 4. Local workspace relative path
-    repo_root = Path(__file__).resolve().parent.parent
-    local_relative = (
-        repo_root
-        / "datasets"
-        / "st-vincents-university-hospital-university-college-dublin-sleep-apnea-database-1.0.0"
-        / "files"
-    )
-    if local_relative.exists():
-        return str(local_relative)
-
-    # 5. Default fallback path (Windows)
-    return str(
-        Path(
-            r"d:\Sleep irregularity\datasets"
-            r"\st-vincents-university-hospital-university-college-dublin-sleep-apnea-database-1.0.0"
-            r"\files"
-        )
+def get_data_dir() -> str:
+    for candidate in CANDIDATE_PATHS:
+        if candidate and Path(candidate).exists():
+            return str(candidate)
+    # If none exist, fail loudly with a helpful message:
+    raise FileNotFoundError(
+        "Could not find dataset directory. Set 'DATA_DIR' environment variable."
     )
 
+DATA_DIR = get_data_dir()
 
-DATA_DIR = _resolve_data_dir()
 
 EDF_SUFFIX = ".edf"
 RESP_EVT_SUFFIX = "_respevt.txt"
