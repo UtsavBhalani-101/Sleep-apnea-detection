@@ -6,15 +6,25 @@ Run with:
     python -m pipeline.orchestrator
 or:
     from pipeline.orchestrator import run
+
+When `WANDB_DISABLED` is not set to a truthy value, every run is uploaded to
+Weights & Biases (project name from `WANDB_PROJECT` env var, default
+`sleep-apnea-experiments`). The run is auto-named `EXP_<next>` based on how
+many `EXP_*.md` files are in the experiments/ directory.
 """
 
 from __future__ import annotations
+
+import os
+import socket
+from datetime import datetime
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from . import config, dataset, loader, metrics, models, train as train_mod
+from .wandb_log import WandbLogger
 
 
 def _build_sampler(train_ds: dataset.ApneaSequenceDataset) -> WeightedRandomSampler:
@@ -43,14 +53,68 @@ def _build_sampler(train_ds: dataset.ApneaSequenceDataset) -> WeightedRandomSamp
     )
 
 
-def run(sanity: bool = False) -> None:
+def _next_exp_id() -> str:
+    """Return EXP_NNN where NNN is one higher than the largest existing exp file."""
+    exp_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "experiments")
+    if not os.path.isdir(exp_dir):
+        return "EXP_001"
+    existing = []
+    for name in os.listdir(exp_dir):
+        if name.startswith("EXP_") and name.endswith(".md"):
+            digits = "".join(ch for ch in name if ch.isdigit())
+            if digits:
+                existing.append(int(digits))
+    nxt = (max(existing) + 1) if existing else 1
+    return f"EXP_{nxt:03d}"
+
+
+def run(sanity: bool = False, exp_id: str | None = None, notes: str | None = None) -> None:
     """
     Run the full pipeline. Set sanity=True to use the single sanity-check
     patient for both train and test (useful for overfitting smoke tests).
+
+    Parameters
+    ----------
+    sanity : bool
+        If True, train + test on the sanity-check patient.
+    exp_id : str | None
+        Override the auto-generated EXP_NNN id (e.g. ``"EXP_011"``).
+    notes : str | None
+        Optional text attached to the wandb run.
     """
     torch.manual_seed(config.RANDOM_SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
+
+    exp_id = exp_id or _next_exp_id()
+
+    # ── W&B logger (auto-disabled if WANDB_DISABLED=true or wandb missing) ──
+    logger = WandbLogger(
+        exp_id=exp_id,
+        run_name=f"{exp_id} — {datetime.now().strftime('%Y-%m-%d %H:%M')} @ {socket.gethostname()}",
+        notes=notes,
+        tags=["sanity" if sanity else "full", "pipeline-live"],
+        config={
+            "sanity": sanity,
+            "device": str(device),
+            "cuda_available": torch.cuda.is_available(),
+            "random_seed": config.RANDOM_SEED,
+            "channels": list(config.EDF_CHANNELS),
+            "in_channels": len(config.EDF_CHANNELS),
+            "target_sfreq": config.TARGET_SFREQ,
+            "window_seconds": config.WINDOW_SECONDS,
+            "samples_per_window": config.SAMPLES_PER_WIN,
+            "overlap_threshold_secs": config.OVERLAP_THRESHOLD_SECS,
+            "clip_sigma": config.CLIP_SIGMA,
+            "seq_len": config.SEQ_LEN,
+            "batch_size": config.BATCH_SIZE,
+            "num_epochs": config.NUM_EPOCHS,
+            "learn_rate": config.LEARN_RATE,
+            "dropout": config.DROPOUT,
+            "train_patients": config.SANITY_CHECK_PATIENTS if sanity else config.TRAIN_PATIENTS,
+            "test_patients": config.SANITY_CHECK_PATIENTS if sanity else config.TEST_PATIENTS,
+        },
+    )
 
     # ── Step 6: Gate check ──────────────────────────────────────────────────
     print("\n[STEP 6] Running diagnostic gate check on ucddb002 ...")
@@ -81,6 +145,7 @@ def run(sanity: bool = False) -> None:
     # ── Step 7: Model ───────────────────────────────────────────────────────
     in_channels = train_windows[0].shape[1] if train_windows else len(config.EDF_CHANNELS)
     model = models.ApneaCNNLSTM(in_channels=in_channels).to(device)
+    logger.watch_model(model)
 
     # Sampler balances the batches — no pos_weight needed in the loss.
     criterion = nn.BCEWithLogitsLoss()
@@ -88,7 +153,7 @@ def run(sanity: bool = False) -> None:
 
     # ── Step 8: Train ───────────────────────────────────────────────────────
     print(f"\n[STEP 8] Training for {config.NUM_EPOCHS} epochs ...")
-    train_mod.fit(
+    train_losses, val_losses = train_mod.fit(
         model,
         train_loader,
         test_loader,
@@ -97,11 +162,34 @@ def run(sanity: bool = False) -> None:
         device,
         num_epochs=config.NUM_EPOCHS,
     )
+    for epoch, (tl, vl) in enumerate(zip(train_losses, val_losses), start=1):
+        logger.log_epoch(epoch, train_loss=tl, val_loss=vl)
+    logger.log_epoch_curve(train_losses, val_losses)
 
     # ── Step 9: Evaluate ────────────────────────────────────────────────────
     print("\n[STEP 9] Evaluating on test patients ...")
-    metrics.evaluate(model, test_loader, device)
-    metrics.evaluate_threshold_sweep(model, test_loader, device)
+    best_thresh, best_f1, acc, recall_v, precision_v, cm = metrics.evaluate(model, test_loader, device)
+    sweep = metrics.evaluate_threshold_sweep(model, test_loader, device)
+
+    tn = fp = fn = tp = None
+    if cm is not None and cm.size == 4:
+        tn, fp, fn, tp = (int(v) for v in cm.ravel())
+
+    logger.log_final(
+        optimal_threshold=float(best_thresh),
+        accuracy=float(acc),
+        macro_f1=float(best_f1),
+        sensitivity=float(recall_v) if recall_v == recall_v else None,  # NaN -> None
+        precision=float(precision_v) if precision_v == precision_v else None,
+        tn=tn,
+        fp=fp,
+        fn=fn,
+        tp=tp,
+        threshold_sweep=sweep,
+        confusion_matrix=cm,
+    )
+
+    logger.finish()
 
 
 if __name__ == "__main__":

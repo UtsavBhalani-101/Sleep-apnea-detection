@@ -60,14 +60,14 @@ def evaluate(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
-) -> tuple[float, float, float, float, np.ndarray]:
+) -> tuple[float, float, float, float, float, np.ndarray]:
     """
     Sweep thresholds from 0.10 to 0.85 and report the best macro-F1 result.
     Uses only the final timestep of each sequence (matches evaluate_threshold_sweep).
 
     Returns
     -------
-    best_threshold, best_macro_f1, accuracy, apnea_recall, confusion_matrix
+    best_threshold, best_macro_f1, accuracy, apnea_recall, apnea_precision, confusion_matrix
     """
     probs, labels = _collect_probs_and_labels(model, loader, device, last_step_only=True)
 
@@ -84,9 +84,11 @@ def evaluate(
     cm = confusion_matrix(labels, final_preds)
 
     apnea_recall = float("nan")
+    apnea_precision = float("nan")
     if cm.shape == (2, 2):
         tn, fp, fn, tp = cm.ravel()
         apnea_recall = tp / (tp + fn + 1e-8)
+        apnea_precision = tp / (tp + fp + 1e-8)
 
     print(f"Optimal Threshold : {best_thresh:.2f}")
     print(f"Accuracy          : {acc:.4f}")
@@ -94,20 +96,25 @@ def evaluate(
     print("Confusion Matrix  :")
     print(cm)
 
-    return best_thresh, best_f1, acc, apnea_recall, cm
+    return best_thresh, best_f1, acc, apnea_recall, apnea_precision, cm
 
 
 def evaluate_threshold_sweep(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
-) -> None:
+) -> list[dict[str, float]]:
     """
     Print macro F1 / sensitivity / precision across thresholds 0.10–0.85,
     using only the last timestep of each sequence (matches orchestrator usage).
+
+    Returns
+    -------
+    list of dicts with keys: threshold, macro_f1, sensitivity, precision
     """
     probs, labels = _collect_probs_and_labels(model, loader, device, last_step_only=True)
 
+    rows: list[dict[str, float]] = []
     print(f"\n{'=' * 60}")
     print(f"  THRESHOLD SWEEP EVALUATION")
     print(f"{'=' * 60}")
@@ -117,4 +124,13 @@ def evaluate_threshold_sweep(
         sens = recall_score(labels, preds, pos_label=1, zero_division=0)
         prec = precision_score(labels, preds, pos_label=1, zero_division=0)
         print(f"t={t:.2f}  macro_F1={f1:.3f}  sens={sens:.3f}  prec={prec:.3f}")
+        rows.append(
+            {
+                "threshold": float(round(t, 2)),
+                "macro_f1": float(f1),
+                "sensitivity": float(sens),
+                "precision": float(prec),
+            }
+        )
     print(f"{'=' * 60}\n")
+    return rows
