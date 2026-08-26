@@ -117,7 +117,7 @@ def run_sanity(
 
     # ── Evaluate ────────────────────────────────────────────────────────────
     print(f"\n[5/5] Evaluating (same patient) ...")
-    best_thresh, best_f1, acc, apnea_recall, cm = metrics.evaluate(
+    best_thresh, best_f1, acc, apnea_recall, apnea_precision, cm = metrics.evaluate(
         model, test_loader, device
     )
     metrics.evaluate_threshold_sweep(model, test_loader, device)
