@@ -12,9 +12,11 @@ DATA_REL_PATH = Path("datasets/st-vincents-university-hospital-university-colleg
 # Locations to search, in priority order:
 CANDIDATE_PATHS = [
     os.environ.get("DATA_DIR"),                                     # 1. Env variable (if set)
-    Path("/kaggle/input/st-vincents-sleep-apnea/files"),            # 2. Kaggle dataset
-    Path(__file__).resolve().parents[1] / DATA_REL_PATH,            # 3. Local repo folder
-    Path(r"d:\Sleep irregularity") / DATA_REL_PATH,                 # 4. Windows absolute fallback
+    Path("/kaggle/input/datasets/antiti/ucddb-dataset/st-vincents-university-hospital-university-college-dublin-sleep-apnea-database-1.0.0/files"),  # 2. UCDDB dataset (actual path)
+    Path("/kaggle/input/st-vincents-sleep-apnea/files"),            # 3. UCDDB dataset (standard path)
+    Path("/kaggle/input/datasets/antiti/shhs-dataset/polysomnography"),  # 4. SHHS dataset base
+    Path(__file__).resolve().parents[1] / DATA_REL_PATH,            # 5. Local repo folder
+    Path(r"d:\Sleep irregularity") / DATA_REL_PATH,                 # 6. Windows absolute fallback
 ]
 
 def get_data_dir() -> str:
