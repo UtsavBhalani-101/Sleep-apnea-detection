@@ -135,11 +135,22 @@ def run(sanity: bool = False, exp_id: str | None = None, notes: str | None = Non
 
     sampler = _build_sampler(train_ds)
 
+    loader_workers = 2
     train_loader = DataLoader(
-        train_ds, batch_size=config.BATCH_SIZE, sampler=sampler, num_workers=0
+        train_ds,
+        batch_size=config.BATCH_SIZE,
+        sampler=sampler,
+        num_workers=loader_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=bool(loader_workers),
     )
     test_loader = DataLoader(
-        test_ds, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=0
+        test_ds,
+        batch_size=config.BATCH_SIZE,
+        shuffle=False,
+        num_workers=loader_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=bool(loader_workers),
     )
 
     # ── Step 7: Model ───────────────────────────────────────────────────────
@@ -149,10 +160,20 @@ def run(sanity: bool = False, exp_id: str | None = None, notes: str | None = Non
 
     # Sampler balances the batches — no pos_weight needed in the loss.
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARN_RATE)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config.LEARN_RATE,
+        weight_decay=config.WEIGHT_DECAY,
+    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=config.LR_SCHEDULER_FACTOR,
+        patience=config.LR_SCHEDULER_PATIENCE,
+    )
 
     # ── Step 8: Train ───────────────────────────────────────────────────────
-    print(f"\n[STEP 8] Training for {config.NUM_EPOCHS} epochs ...")
+    print(f"\n[STEP 8] Training for up to {config.NUM_EPOCHS} epochs ...")
     train_losses, val_losses = train_mod.fit(
         model,
         train_loader,
@@ -161,6 +182,8 @@ def run(sanity: bool = False, exp_id: str | None = None, notes: str | None = Non
         criterion,
         device,
         num_epochs=config.NUM_EPOCHS,
+        scheduler=scheduler,
+        early_stop_patience=config.EARLY_STOP_PATIENCE,
     )
     for epoch, (tl, vl) in enumerate(zip(train_losses, val_losses), start=1):
         logger.log_epoch(epoch, train_loss=tl, val_loss=vl)

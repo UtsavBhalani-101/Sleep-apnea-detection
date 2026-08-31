@@ -28,6 +28,7 @@ class ApneaCNNLSTM(nn.Module):
         cnn_out_dim: int = 128,
         lstm_hidden: int = 64,
         dropout: float = config.DROPOUT,
+        lstm_dropout: float = config.LSTM_DROPOUT,
     ):
         super().__init__()
 
@@ -70,7 +71,7 @@ class ApneaCNNLSTM(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            nn.Dropout(dropout),
+            nn.Dropout(lstm_dropout),
             nn.Linear(lstm_hidden * 2, 32),
             nn.ReLU(),
             nn.Linear(32, 1),

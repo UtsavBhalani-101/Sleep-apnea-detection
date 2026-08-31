@@ -71,9 +71,12 @@ def fit(
     criterion: nn.Module,
     device: torch.device,
     num_epochs: int,
+    *,
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None = None,
+    early_stop_patience: int | None = None,
 ) -> tuple[list[float], list[float]]:
     """
-    Run a full training schedule.
+    Run a full training schedule with optional LR scheduling + early stopping.
 
     Returns
     -------
@@ -82,6 +85,9 @@ def fit(
     train_losses: list[float] = []
     val_losses: list[float] = []
 
+    best_val = float("inf")
+    epochs_since_best = 0
+
     for epoch in range(1, num_epochs + 1):
         train_loss = train_one_epoch(
             model, train_loader, optimizer, criterion, device, epoch
@@ -89,5 +95,22 @@ def fit(
         val_loss = validate(model, test_loader, criterion, device)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
+        print(f"  Epoch {epoch:02d} | train loss: {train_loss:.4f} | val loss: {val_loss:.4f}")
+
+        if scheduler is not None:
+            scheduler.step(val_loss)
+
+        if val_loss < best_val:
+            best_val = val_loss
+            epochs_since_best = 0
+        else:
+            epochs_since_best += 1
+
+        if early_stop_patience is not None and epochs_since_best >= early_stop_patience:
+            print(
+                f"  Early stopping at epoch {epoch} "
+                f"(no val-loss improvement for {early_stop_patience} epochs; best={best_val:.4f})"
+            )
+            break
 
     return train_losses, val_losses

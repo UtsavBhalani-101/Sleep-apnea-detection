@@ -78,5 +78,12 @@ NUM_EPOCHS = 30
 LEARN_RATE = 1e-3
 DROPOUT = 0.3
 
+# Regularization & training-loop knobs (added per Step-1 overfitting diagnosis).
+WEIGHT_DECAY = 1e-3           # Adam weight decay
+LSTM_DROPOUT = 0.5            # dropout applied after the BiLSTM (before classifier head)
+EARLY_STOP_PATIENCE = 5       # stop if val loss doesn't improve for N epochs
+LR_SCHEDULER_PATIENCE = 3     # plateau patience for ReduceLROnPlateau
+LR_SCHEDULER_FACTOR = 0.5     # LR multiplier on plateau
+
 # Random seed for reproducibility
 RANDOM_SEED = 42
