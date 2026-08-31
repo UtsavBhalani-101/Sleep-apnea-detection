@@ -21,9 +21,19 @@ Design goals
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+try:
+    from dotenv import load_dotenv
+
+    _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+    if _ENV_PATH.is_file():
+        load_dotenv(_ENV_PATH, override=False)
+except ImportError:  # pragma: no cover
+    pass
 
 try:
     import wandb
