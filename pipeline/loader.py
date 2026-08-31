@@ -12,6 +12,7 @@ Functions:
 from __future__ import annotations
 
 import datetime
+import warnings
 import os
 
 import mne
@@ -38,7 +39,13 @@ def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str], datetime.da
     """
     edf_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.EDF_SUFFIX}")
 
-    raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Channels contain different lowpass filters. Lowest filter setting will be stored.  raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)",
+            category=RuntimeWarning,
+        )
+        raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
     filtered_raw = raw.copy().pick(picks=config.EDF_CHANNELS)
 
     native_sfreq = filtered_raw.info["sfreq"]

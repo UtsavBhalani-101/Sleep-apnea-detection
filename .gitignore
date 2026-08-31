@@ -17,7 +17,9 @@ sleep-apnea-pipeline pycode.py
 ACTION_PLAN.md
 sample.txt
 wandb/
-upload_to_wandb.py
 .env
 experiment_logs
 experiment_notes
+papers/
+LITERATURE_COMPARISON.md
+ML4H_SUBMISSION_PLAN.md
