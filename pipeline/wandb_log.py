@@ -85,6 +85,10 @@ class WandbLogger:
         if tags:
             init_kwargs["tags"] = tags
 
+        wandb_api_key = os.environ.get("WANDB_API_KEY")
+        if wandb_api_key:
+            wandb.login(key=wandb_api_key, relogin=True, anonymous="never", force=True)
+
         self._run = wandb.init(**init_kwargs)
         print(f"[wandb] run initialized: {wandb.run.get_url() if wandb.run else '<offline>'}")
 
