@@ -15,12 +15,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from . import config
+from . import config, datasets_spec as specs
 from .loader import process_patient
 
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "windows_cache"
-CACHE_VERSION = "v2"
+CACHE_VERSION = "v3"
 
 
 def _config_fingerprint() -> str:
@@ -28,7 +28,6 @@ def _config_fingerprint() -> str:
     raw = (
         f"{CACHE_VERSION}|{config.TARGET_SFREQ}|{config.WINDOW_SECONDS}"
         f"|{config.OVERLAP_THRESHOLD_SECS}|{config.CLIP_SIGMA}"
-        f"|{','.join(config.EDF_CHANNELS)}"
     )
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
@@ -58,6 +57,7 @@ def build_dataset_per_patient(
     patient_ids: list[str],
     *,
     dataset_name: str = "ucddb",
+    spec: specs.DatasetSpec | None = None,
     use_cache: bool = True,
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """
@@ -73,6 +73,9 @@ def build_dataset_per_patient(
     If ``use_cache`` is True, both the bulk and per-patient fallbacks are
     memoized to disk so subsequent runs skip the EDF/resample/window pass.
     """
+    if spec is None:
+        spec = specs.get_spec(dataset_name)
+
     all_windows: list[np.ndarray] = []
     all_labels: list[np.ndarray] = []
     for pid in patient_ids:
@@ -87,7 +90,7 @@ def build_dataset_per_patient(
             labs = np.load(labs_path)
         else:
             try:
-                wins, labs = process_patient(pid)
+                wins, labs, _ch_names = process_patient(pid, spec=spec)
             except Exception as e:  # noqa: BLE001 — surface but keep going
                 print(f"FAILED — {e}")
                 continue

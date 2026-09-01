@@ -41,29 +41,33 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-from . import config, dataset, loader
+from . import config, dataset, datasets_spec as specs, loader
 from .dataset import preprocessed_paths
 
 
-def _discover_patients(dataset_name: str, explicit: list[str] | None) -> list[str]:
+def _discover_patients(spec: specs.DatasetSpec, explicit: list[str] | None) -> list[str]:
     if explicit:
         return list(explicit)
 
+    root = spec.data_dir or config.DATA_DIR
     candidates: list[str] = []
     try:
-        for entry in sorted(os.listdir(config.DATA_DIR)):
-            full = Path(config.DATA_DIR) / entry
-            if entry.lower().endswith(config.EDF_SUFFIX.lower()) and full.is_file():
-                candidates.append(entry[: -len(config.EDF_SUFFIX)])
+        for entry in sorted(os.listdir(root)):
+            full = Path(root) / entry
+            if not full.is_file():
+                continue
+            pid = spec.parse_patient_id(entry)
+            if pid is not None:
+                candidates.append(pid)
     except FileNotFoundError as exc:
         raise SystemExit(
-            f"DATA_DIR not found: {config.DATA_DIR!r}. "
-            "Set the DATA_DIR environment variable to the dataset root."
+            f"Data dir not found: {root!r} (spec={spec.name}). "
+            "Set DATA_DIR or pass --patients explicitly."
         ) from exc
 
     if not candidates:
         raise SystemExit(
-            f"No EDF files found under DATA_DIR={config.DATA_DIR!r}. "
+            f"No EDF files matching spec {spec.name!r} found under {root!r}. "
             "Pass --patients explicitly if your filenames use a different convention."
         )
     return candidates
@@ -73,6 +77,7 @@ def preprocess_all(
     patient_ids: Iterable[str],
     *,
     dataset_name: str = "ucddb",
+    spec: specs.DatasetSpec | None = None,
     force: bool = False,
 ) -> dict[str, tuple[Path, Path]]:
     """
@@ -81,14 +86,18 @@ def preprocess_all(
     Returns a ``{patient_id: (wins_path, labels_path)}`` mapping. Patients
     whose files already exist (and ``force`` is False) are skipped.
     """
+    if spec is None:
+        spec = specs.get_spec(dataset_name)
+
     out_dir = dataset.dataset_root(dataset_name)
-    print(f"[preprocess] dataset_name : {dataset_name}")
+    print(f"[preprocess] dataset_name : {spec.name}")
     print(f"[preprocess] output dir   : {out_dir}")
-    print(f"[preprocess] DATA_DIR     : {config.DATA_DIR}")
-    print(f"[preprocess] config hash  : {out_dir.name.split('_')[-1]}")
+    print(f"[preprocess] data dir     : {spec.data_dir or config.DATA_DIR}")
+    print(f"[preprocess] channels     : {spec.channels}")
+    print(f"[preprocess] annotation   : {spec.annotation_format} ({spec.annotation_suffix})")
     print(
-        f"[preprocess] channels     : {config.EDF_CHANNELS} | "
-        f"sfreq={config.TARGET_SFREQ} Hz | win={config.WINDOW_SECONDS}s"
+        f"[preprocess] window       : {config.WINDOW_SECONDS}s @ "
+        f"{config.TARGET_SFREQ} Hz (samples/win={config.SAMPLES_PER_WIN})"
     )
     print()
 
@@ -106,7 +115,7 @@ def preprocess_all(
 
         print(f"  [....] {pid} ...", end=" ", flush=True)
         try:
-            wins, labs = loader.process_patient(pid)
+            wins, labs, _ch = loader.process_patient(pid, spec=spec)
         except Exception as exc:  # noqa: BLE001
             failed += 1
             print(f"FAILED — {exc}")
@@ -141,13 +150,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dataset-name",
         default="ucddb",
-        help="Logical dataset name used as the cache subfolder (default: ucddb).",
+        help="Logical dataset name (e.g. ucddb, shhs1, shhs2, mesa).",
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Override the spec's data directory (use when running outside Kaggle).",
     )
     parser.add_argument(
         "--patients",
         nargs="*",
         default=None,
-        help="Explicit patient IDs to process. Defaults to every EDF in DATA_DIR.",
+        help="Explicit patient IDs to process. Defaults to auto-discovery.",
     )
     parser.add_argument(
         "--force",
@@ -156,9 +170,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    pids = _discover_patients(args.dataset_name, args.patients)
+    spec = specs.get_spec(args.dataset_name)
+    if args.data_dir is not None:
+        spec = specs.DatasetSpec(
+            **{**spec.__dict__, "data_dir": args.data_dir}
+        )
+
+    pids = _discover_patients(spec, args.patients)
     print(f"[preprocess] {len(pids)} patient(s) discovered\n")
-    preprocess_all(pids, dataset_name=args.dataset_name, force=args.force)
+    preprocess_all(pids, dataset_name=spec.name, spec=spec, force=args.force)
     return 0
 
 

@@ -1,10 +1,11 @@
 """
-EDF loading, resampling, respevt parsing, and the diagnostic gate check.
+EDF loading, resampling, respevt / NSRR-XML parsing, and the diagnostic gate check.
 
 Functions:
-    load_edf          — read EDF + select channels
+    load_edf          — read EDF + select channels (spec-aware)
     resample_to_10hz  — anti-aliased decimation to TARGET_SFREQ
     parse_respevt     — read respevt.txt → list of (onset_sec, duration_sec)
+    parse_events      — respevt vs nsrr-xml dispatch based on DatasetSpec
     run_gate_check    — end-to-end diagnostic print for one patient
     process_patient   — full Steps 1–5 for a single patient
 """
@@ -21,14 +22,23 @@ import pandas as pd
 from scipy.signal import resample_poly
 
 from . import config
+from . import datasets_spec as specs
 from . import windows as windows_mod
 
 mne.set_log_level("ERROR")
 
 
-def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str], datetime.datetime | None]:
+def load_edf(
+    patient_id: str,
+    spec: specs.DatasetSpec | None = None,
+) -> tuple[np.ndarray, float, list[str], datetime.datetime | None, specs.DatasetSpec]:
     """
     Load the EDF for a given patient and select the configured channels.
+
+    Parameters
+    ----------
+    patient_id : e.g. "ucddb002" or "shhs1-200001"
+    spec       : DatasetSpec describing the dataset. Defaults to UCDDB.
 
     Returns
     -------
@@ -36,24 +46,27 @@ def load_edf(patient_id: str) -> tuple[np.ndarray, float, list[str], datetime.da
     native_sfreq : float — sampling frequency stored in the EDF header
     ch_names     : list[str] — channel names actually present after pick
     meas_date    : datetime | None — recording start time from the EDF header
+    spec         : the DatasetSpec that was used (echoed for callers)
     """
-    edf_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.EDF_SUFFIX}")
+    if spec is None:
+        spec = specs.UCDDB
+    edf_path = spec.edf_path(patient_id)
 
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
-            message="Channels contain different lowpass filters. Lowest filter setting will be stored.  raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)",
+            message="Channels contain different lowpass filters. Lowpass filter will be set to lowest of the values.  raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=\"ERROR\")",
             category=RuntimeWarning,
         )
         raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
-    filtered_raw = raw.copy().pick(picks=config.EDF_CHANNELS)
+    filtered_raw = raw.copy().pick(picks=list(spec.channels))
 
     native_sfreq = filtered_raw.info["sfreq"]
     ch_names = filtered_raw.info["ch_names"]
     data = filtered_raw.get_data()
     meas_date = filtered_raw.info["meas_date"]
 
-    return data, native_sfreq, ch_names, meas_date
+    return data, native_sfreq, ch_names, meas_date, spec
 
 
 def resample_to_10hz(data: np.ndarray, native_sfreq: float) -> np.ndarray:
@@ -71,6 +84,7 @@ def resample_to_10hz(data: np.ndarray, native_sfreq: float) -> np.ndarray:
 def parse_respevt(
     patient_id: str,
     meas_date: datetime.datetime | None = None,
+    spec: specs.DatasetSpec | None = None,
 ) -> list[tuple[float, float]]:
     """
     Parse the respevt.txt file for a patient into (onset_sec, duration_sec).
@@ -87,14 +101,19 @@ def parse_respevt(
         Recording start time from the EDF header. If None, falls back to
         re-opening the EDF (slower; only needed when calling parse_respevt
         without first calling load_edf).
+    spec : DatasetSpec | None
+        Defaults to UCDDB. Only the EDF/annotation paths are used here.
     """
+    if spec is None:
+        spec = specs.UCDDB
+
     if meas_date is None:
-        edf_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.EDF_SUFFIX}")
+        edf_path = spec.edf_path(patient_id)
         meas_date = mne.io.read_raw_edf(edf_path, preload=False, verbose=False).info["meas_date"]
 
     edf_start_sec = meas_date.hour * 3600 + meas_date.minute * 60 + meas_date.second
 
-    evt_path = os.path.join(config.DATA_DIR, f"{patient_id}{config.RESP_EVT_SUFFIX}")
+    evt_path = spec.annotation_path(patient_id)
     if not os.path.exists(evt_path):
         return []
 
@@ -143,21 +162,48 @@ def parse_respevt(
     return list(zip(df["onset_sec"], df["duration_sec"]))
 
 
-def process_patient(patient_id: str) -> tuple[np.ndarray, np.ndarray]:
+def parse_events(
+    patient_id: str,
+    *,
+    meas_date: datetime.datetime | None = None,
+    spec: specs.DatasetSpec | None = None,
+) -> list[tuple[float, float]]:
+    """
+    Dispatch annotation parsing by dataset. Returns apnea/hypopnea events
+    as ``(onset_sec, duration_sec)``.
+    """
+    if spec is None:
+        spec = specs.UCDDB
+
+    if spec.annotation_format == "respevt":
+        return parse_respevt(patient_id, meas_date=meas_date, spec=spec)
+    if spec.annotation_format == "nsrr-xml":
+        raw = specs.parse_nsrr_xml_events(spec.annotation_path(patient_id))
+        return specs.filter_apnea_events(raw, spec)
+    raise ValueError(
+        f"Unknown annotation_format {spec.annotation_format!r} for spec {spec.name!r}"
+    )
+
+
+def process_patient(
+    patient_id: str,
+    spec: specs.DatasetSpec | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """
     Run Steps 1–5 for one patient.
 
     Returns
     -------
-    windows : (n_windows, C, SAMPLES_PER_WIN), float32, z-score normalized
-    labels  : (n_windows,), int64, binary
+    windows     : (n_windows, C, SAMPLES_PER_WIN), float32, z-score normalized
+    labels      : (n_windows,), int64, binary
+    ch_names    : list[str] — channel order actually used (== spec.channels)
     """
-    data, native_sfreq, _, meas_date = load_edf(patient_id)
+    data, native_sfreq, ch_names, meas_date, spec = load_edf(patient_id, spec=spec)
     data_10hz = resample_to_10hz(data, native_sfreq)
-    events = parse_respevt(patient_id, meas_date=meas_date)
+    events = parse_events(patient_id, meas_date=meas_date, spec=spec)
     windows, labels = windows_mod.make_windows_and_labels(data_10hz, events)
-    windows_norm = windows_mod.normalize(windows, labels)
-    return windows_norm, labels
+    windows_norm = windows_mod.normalize(windows, labels, channel_names=list(spec.channels))
+    return windows_norm, labels, list(spec.channels)
 
 
 def run_gate_check(patient_id: str = "ucddb002") -> None:
@@ -172,7 +218,7 @@ def run_gate_check(patient_id: str = "ucddb002") -> None:
     print(f"{'=' * 60}")
 
     # Step 1: Load
-    data, native_sfreq, ch_names, meas_date = load_edf(patient_id)
+    data, native_sfreq, ch_names, meas_date, _spec = load_edf(patient_id)
     print(f"  Channels      : {ch_names}")
     print(f"  Native sfreq  : {native_sfreq} Hz")
     print(f"  Raw shape     : {data.shape}")
@@ -182,7 +228,7 @@ def run_gate_check(patient_id: str = "ucddb002") -> None:
     print(f"  After resample: {data_10hz.shape}  (10 Hz)")
 
     # Step 3: Parse events
-    events = parse_respevt(patient_id, meas_date=meas_date)
+    events = parse_events(patient_id, meas_date=meas_date)
     print(f"  Events parsed : {len(events)}")
     if events:
         print(
@@ -218,7 +264,7 @@ def run_gate_check(patient_id: str = "ucddb002") -> None:
         f"  {'✓' if 0.10 <= apnea_rate <= 0.40 else '✗'} "
         f"Apnea rate in [10%, 40%]  → {100 * apnea_rate:.1f}%"
     )
-    expected_shape = (len(config.EDF_CHANNELS), config.SAMPLES_PER_WIN)
+    expected_shape = (len(_spec.channels), config.SAMPLES_PER_WIN)
     print(
         f"  {'✓' if windows.shape[1:] == expected_shape else '✗'} "
         f"Window shape is {expected_shape}  → {windows.shape[1:]}"
