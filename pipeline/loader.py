@@ -12,9 +12,10 @@ Functions:
 
 from __future__ import annotations
 
+import contextlib
 import datetime
-import warnings
 import os
+import warnings
 
 import mne
 import numpy as np
@@ -24,6 +25,29 @@ from scipy.signal import resample_poly
 from . import config
 from . import datasets_spec as specs
 from . import windows as windows_mod
+
+
+@contextlib.contextmanager
+def _silence_mne_warnings():
+    """Suppress MNE's per-file filter warnings (highpass/lowpass disagreement).
+
+    MNE emits a ``RuntimeWarning`` per EDF when channels disagree on the
+    highpass or lowpass filter cutoffs. We do not recompute filters, so
+    these messages add noise without value.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Channels contain different highpass filters. Highest filter setting will be stored.",
+            category=RuntimeWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="Channels contain different lowpass filters. Lowest filter setting will be stored.",
+            category=RuntimeWarning,
+        )
+        yield
+
 
 mne.set_log_level("ERROR")
 
@@ -52,12 +76,7 @@ def load_edf(
         spec = specs.UCDDB
     edf_path = spec.edf_path(patient_id)
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="Channels contain different lowpass filters. Lowpass filter will be set to lowest of the values.  raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=\"ERROR\")",
-            category=RuntimeWarning,
-        )
+    with _silence_mne_warnings():
         raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
     filtered_raw = raw.copy().pick(picks=list(spec.channels))
 
@@ -109,7 +128,8 @@ def parse_respevt(
 
     if meas_date is None:
         edf_path = spec.edf_path(patient_id)
-        meas_date = mne.io.read_raw_edf(edf_path, preload=False, verbose=False).info["meas_date"]
+        with _silence_mne_warnings():
+            meas_date = mne.io.read_raw_edf(edf_path, preload=False, verbose=False).info["meas_date"]
 
     edf_start_sec = meas_date.hour * 3600 + meas_date.minute * 60 + meas_date.second
 

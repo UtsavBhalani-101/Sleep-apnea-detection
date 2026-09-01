@@ -38,8 +38,19 @@ import argparse
 import os
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Iterable
+
+# Silence the runpy "found in sys.modules... prior to execution" warning that
+# Python emits when you run `python -m pipeline.preprocess_dataset` after the
+# orchestrator has already imported the `pipeline` package. The actual code is
+# safe; the warning is purely about import order.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*found in sys.modules after import of package.*",
+    category=RuntimeWarning,
+)
 
 from . import config, dataset, datasets_spec as specs, loader
 from .dataset import preprocessed_paths

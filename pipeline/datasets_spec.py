@@ -88,11 +88,19 @@ UCDDB = DatasetSpec(
 # ─────────────────────────────────────────────────────────────────────────────
 # SHHS — Sleep Heart Health Study (NSRR XML annotations)
 # ─────────────────────────────────────────────────────────────────────────────
-# SHHS ships split across ``shhs1`` and ``shhs2`` subfolders; this generic
-# spec works for either as long as ``data_dir`` is set to the right
-# ``edfs/shhsN`` folder. The annotation dir mirrors at
-# ``annotations-events-nsrr/shhsN``.
-SHHS_BASE = "/kaggle/input/datasets/antiti/shhs-dataset/polysomnography"
+# SHHS ships split across ``shhs1`` and ``shhs2`` subfolders under both
+# ``edfs`` and ``annotations-events-nsrr``. Each subset is a sibling
+# directory under the corresponding base:
+#
+#     <EDF_BASE>/<subset>/*.edf
+#     <ANNOTATIONS_BASE>/<subset>/*-nsrr.xml
+#
+SHHS_EDF_BASE = (
+    "/kaggle/input/datasets/antiti/shhs-dataset/polysomnography/edfs"
+)
+SHHS_ANNOTATIONS_BASE = (
+    "/kaggle/input/datasets/antiti/shhs-dataset/polysomnography/annotations-events-nsrr"
+)
 
 
 def make_shhs_spec(
@@ -102,13 +110,13 @@ def make_shhs_spec(
 ) -> DatasetSpec:
     """
     Build a SHHS spec. ``subset`` is "shhs1" or "shhs2"; ``data_dir``
-    defaults to ``<SHHS_BASE>/edfs/<subset>`` and ``annotations_dir`` defaults
-    to ``<SHHS_BASE>/annotations-events-nsrr/<subset>``.
+    defaults to ``<SHHS_EDF_BASE>/<subset>`` and ``annotations_dir`` defaults
+    to ``<SHHS_ANNOTATIONS_BASE>/<subset>``.
     """
     if data_dir is None:
-        data_dir = os.path.join(SHHS_BASE, "edfs", subset)
+        data_dir = os.path.join(SHHS_EDF_BASE, subset)
     if annotations_dir is None:
-        annotations_dir = os.path.join(SHHS_BASE, "annotations-events-nsrr", subset)
+        annotations_dir = os.path.join(SHHS_ANNOTATIONS_BASE, subset)
     return DatasetSpec(
         name=f"shhs-{subset}",
         edf_suffix=".edf",
