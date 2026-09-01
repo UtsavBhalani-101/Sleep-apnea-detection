@@ -239,3 +239,25 @@ def filter_apnea_events(
         ):
             out.append((onset, duration))
     return out
+
+
+def list_available_patients(spec: DatasetSpec) -> list[str]:
+    """
+    Return every patient ID in ``spec.data_dir`` whose EDF actually exists
+    on disk. Useful for picking training subsets without hardcoding
+    non-contiguous ID ranges.
+
+    Returns ``[]`` if ``spec.data_dir`` is missing/unreadable.
+    """
+    import os
+    root = spec.data_dir
+    if not root or not os.path.isdir(root):
+        return []
+    out: list[str] = []
+    for entry in sorted(os.listdir(root)):
+        pid = spec.parse_patient_id(entry)
+        if pid is None:
+            continue
+        if os.path.isfile(spec.edf_path(pid)):
+            out.append(pid)
+    return out

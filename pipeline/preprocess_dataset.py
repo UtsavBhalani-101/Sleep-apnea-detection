@@ -67,8 +67,13 @@ def _discover_patients(spec: specs.DatasetSpec, explicit: list[str] | None) -> l
             full = Path(root) / entry
             if not full.is_file():
                 continue
+            if spec.parse_patient_id(entry) is None:
+                continue
+            # Round-trip through edf_path so the path used at processing
+            # time is the same one we discovered — guards against any
+            # directory-resolution mismatch.
             pid = spec.parse_patient_id(entry)
-            if pid is not None:
+            if os.path.exists(spec.edf_path(pid)):
                 candidates.append(pid)
     except FileNotFoundError as exc:
         raise SystemExit(
